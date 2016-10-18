@@ -114,6 +114,7 @@ class ReflectionUtils {
 
     private static Map<Class<? extends Annotation>, Annotation> scanFieldAnnotations(Field field, Map<Class<? extends Annotation>, Annotation> annotations) {
         for (Annotation annotation : field.getAnnotations()) {
+            annotation = ProxyAnnotationUtils.convertProxyAnnotation(annotation);
             annotations.put(annotation.annotationType(), annotation);
         }
         return annotations;

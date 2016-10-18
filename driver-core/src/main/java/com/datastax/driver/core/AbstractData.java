@@ -15,9 +15,12 @@
  */
 package com.datastax.driver.core;
 
+import com.datastax.driver.core.utils.ReflectionUtils;
 import com.google.common.base.Objects;
 import com.google.common.reflect.TypeToken;
 
+import java.beans.PropertyDescriptor;
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
@@ -527,6 +530,10 @@ abstract class AbstractData<T extends SettableData<T>> extends AbstractGettableD
     @Override
     public <V> T set(int i, V v, TypeCodec<V> codec) {
         checkType(i, codec.getCqlType().getName());
+        if (isCodecUDT(codec) && areDifferentClassLoader(v, codec)) {
+            v = mapValuesToOSGIClass(v, codec);
+            return setValue(i, codec.serialize(v, protocolVersion));
+        }
         return setValue(i, codec.serialize(v, protocolVersion));
     }
 
@@ -588,5 +595,70 @@ abstract class AbstractData<T extends SettableData<T>> extends AbstractGettableD
         for (int i = 0; i < values.length; i++)
             hash += values[i] == null ? 1 : codecFor(i).deserialize(values[i], protocolVersion).hashCode();
         return hash;
+    }
+
+    /**
+     * When an Object come from other classloader, we need to change the Object to persist to an Object in the
+     * same classloader of the Codec.
+     *
+     * @param v     Object to persist
+     * @param codec Codec to parse the object
+     * @return Object to persist in the same classloader on the Codec
+     */
+    private <V> V mapValuesToOSGIClass(V v, TypeCodec<V> codec) {
+        try {
+            Class clazz = codec.getClass().getClassLoader().loadClass(v.getClass().getName());
+            V newObject = (V) clazz.newInstance();
+            Map<String, PropertyDescriptor> fromProperties = ReflectionUtils.scanProperties(v.getClass());
+            Map<String, PropertyDescriptor> toProperties = ReflectionUtils.scanProperties(clazz);
+            for (String key : fromProperties.keySet()) {
+                try {
+                    Method read = fromProperties.get(key).getReadMethod();
+                    Object readValue = read.invoke(v);
+                    if (readValue != null) {
+                        Method write = toProperties.get(key).getWriteMethod();
+                        write.invoke(newObject, readValue);
+                    }
+                } catch (Exception e) {
+                    // Discard if there is an error
+                    e.printStackTrace();
+                }
+            }
+            return newObject;
+        } catch (Exception e) {
+            //Do not do anything
+        }
+        return v;
+    }
+
+    /**
+     * Check if classloader between object to persist and codec are different, within OSGI objects
+     * come from different places
+     *
+     * @param v     Object to persist
+     * @param codec Codec to parse the object
+     * @return true if classloaders are different
+     */
+    private <V> boolean areDifferentClassLoader(V v, TypeCodec<V> codec) {
+        ClassLoader clObject = v.getClass().getClassLoader();
+        ClassLoader clCodec = codec.getClass().getClassLoader();
+        if (clObject.equals(clCodec)) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Check if it is an UDT codec
+     *
+     * @param codec Codec to check
+     * @return true if codec is UDT type
+     */
+    private <V> boolean isCodecUDT(TypeCodec<V> codec) {
+        String UDT = "udt";
+        if (codec != null && codec.getCqlType() != null && codec.getCqlType().getName() != null && codec.getCqlType().getName().toString() != null) {
+            return codec.getCqlType().getName().toString().equals(UDT);
+        }
+        return false;
     }
 }

@@ -20,10 +20,7 @@ import com.datastax.driver.mapping.annotations.Computed;
 import com.datastax.driver.mapping.annotations.Table;
 
 import java.lang.annotation.Annotation;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
+import java.util.*;
 
 /**
  * Various checks on mapping annotations.
@@ -39,9 +36,12 @@ class AnnotationChecks {
      */
     static <T extends Annotation> T getTypeAnnotation(Class<T> annotation, Class<?> annotatedClass) {
         T instance = annotatedClass.getAnnotation(annotation);
-        if (instance == null)
-            throw new IllegalArgumentException(String.format("@%s annotation was not found on %s",
-                    annotation.getSimpleName(), annotatedClass));
+        if (instance == null) {
+            instance = ProxyAnnotationUtils.rebuildAnnotationFromProxy(annotatedClass, annotation);
+            if (instance == null)
+                throw new IllegalArgumentException(String.format("@%s annotation was not found on %s",
+                        annotation.getSimpleName(), annotatedClass));
+        }
 
         // Check that no other mapping annotations are present
         validateAnnotations(annotatedClass, annotation);

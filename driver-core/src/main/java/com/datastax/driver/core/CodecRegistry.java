@@ -30,6 +30,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 
@@ -189,10 +190,21 @@ public final class CodecRegistry {
         public boolean equals(Object o) {
             if (this == o)
                 return true;
-            if (o == null || getClass() != o.getClass())
+            Class clazzInput = getClassFromClassLoader(o.getClass());
+            if (o == null || getClass() != clazzInput)
                 return false;
             CacheKey cacheKey = (CacheKey) o;
             return Objects.equal(cqlType, cacheKey.cqlType) && Objects.equal(javaType, cacheKey.javaType);
+        }
+
+        private Class getClassFromClassLoader(Class<?> aClass) {
+            Class clazzInput;
+            try {
+                clazzInput = CodecRegistry.class.getClassLoader().loadClass(aClass.getName());
+            } catch (ClassNotFoundException e) {
+                return aClass;
+            }
+            return clazzInput;
         }
 
         @Override
@@ -200,6 +212,19 @@ public final class CodecRegistry {
             return Objects.hashCode(cqlType, javaType);
         }
 
+        @Override
+        public String toString() {
+            if (cqlType != null && javaType != null && javaType.getRawType() != null) {
+                return "CacheKey{" +
+                        "cqlType=" + cqlType.getName() +
+                        ", javaType=" + javaType.getRawType().getName() +
+                        '}';
+            }
+            return "CacheKey{" +
+                    "cqlType=" + cqlType +
+                    ", javaType=" + javaType +
+                    '}';
+        }
     }
 
     /**
@@ -290,11 +315,18 @@ public final class CodecRegistry {
     private final LoadingCache<CacheKey, TypeCodec<?>> cache;
 
     /**
+     * Saving cached keys, we need to do it, because within an OSGI environment
+     * the classloader is different, it depends where the class is located
+     */
+    private Map<String, Object> saveUDTKeysOSGI;
+
+    /**
      * Creates a new instance initialized with built-in codecs for all the base CQL types.
      */
     public CodecRegistry() {
         this.codecs = new CopyOnWriteArrayList<TypeCodec<?>>(PRIMITIVE_CODECS);
         this.cache = defaultCacheBuilder().build(new TypeCodecCacheLoader());
+        this.saveUDTKeysOSGI = new ConcurrentHashMap<String, Object>();
     }
 
     private CacheBuilder<CacheKey, TypeCodec<?>> defaultCacheBuilder() {
@@ -337,6 +369,7 @@ public final class CodecRegistry {
         }
 
         this.codecs.add(newCodec);
+        this.saveUDTKeysOSGI.put(key.toString(), key);
         return this;
     }
 
@@ -477,7 +510,7 @@ public final class CodecRegistry {
             logger.trace("Querying cache for codec [{} <-> {}]", toString(cqlType), toString(javaType));
         CacheKey cacheKey = new CacheKey(cqlType, javaType);
         try {
-            TypeCodec<?> codec = cache.get(cacheKey);
+            TypeCodec<?> codec = getCodec(cacheKey);
             logger.trace("Returning cached codec {}", codec);
             return (TypeCodec<T>) codec;
         } catch (UncheckedExecutionException e) {
@@ -683,4 +716,21 @@ public final class CodecRegistry {
         return value == null ? "ANY" : value.toString();
     }
 
+    /**
+     * Get codec from cache, we need to verify is the key is an OSGI from different classloader
+     * @param cacheKey Object which represent to KEY
+     * @return Codec instance registered from cache
+     * @throws ExecutionException
+     */
+    private <T> TypeCodec<T> getCodec(CacheKey cacheKey) throws ExecutionException {
+        CacheKey key = (CacheKey) saveUDTKeysOSGI.get(cacheKey.toString());
+        TypeCodec<?> codec = null;
+
+        if (key == null) {
+            key = cacheKey;
+        }
+        codec = cache.get(key);
+        logger.trace("Returning cached codec {}", codec);
+        return (TypeCodec<T>) codec;
+    }
 }

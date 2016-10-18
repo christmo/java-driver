@@ -110,7 +110,9 @@ class PropertyMapper {
 
     @SuppressWarnings("unchecked")
     <A extends Annotation> A annotation(Class<A> annotationClass) {
-        return (A) annotations.get(annotationClass);
+        A annotation = (A) annotations.get(annotationClass);
+        return ProxyAnnotationUtils.convertProxyAnnotation(annotation);
+
     }
 
     boolean isComputed() {
@@ -156,7 +158,7 @@ class PropertyMapper {
             type = getter.getGenericReturnType();
         else
             type = field.getGenericType();
-        return (TypeToken<Object>) TypeToken.of(type);
+        return (TypeToken<Object>) TypeToken.of((Type) type);
     }
 
     private int inferPosition() {

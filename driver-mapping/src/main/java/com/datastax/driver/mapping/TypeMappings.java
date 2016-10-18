@@ -47,7 +47,11 @@ class TypeMappings {
     }
 
     static boolean isMappedUDT(Class<?> klass) {
-        return klass.isAnnotationPresent(UDT.class);
+        boolean result = klass.isAnnotationPresent(UDT.class);
+        if (result == false) {
+            result = ProxyAnnotationUtils.checkUDTAnnotationProxy(klass, UDT.class);
+        }
+        return result;
     }
 
     /**
@@ -80,6 +84,7 @@ class TypeMappings {
             if (isMappedUDT(klass)) {
                 if (udts == null)
                     udts = Sets.newHashSet();
+                klass = ProxyAnnotationUtils.getClassFromOSGIClassLoader(klass);
                 udts.add(klass);
             }
         }
